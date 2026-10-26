@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Strategy-Execution Gap</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;600&display=swap">
+<style>
+:root{
+  --bg:#EAF1FB; --bg2:#DCE8FA; --surface:#FFFFFF; --ink:#051938; --muted:#47608A; --line:#C0D1EC;
+  --primary:#1F5FD0; --on-primary:#FFFFFF; --accent:#0A6E9C;
+  color-scheme:light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#051938; --bg2:#0A2A63; --surface:#0C2A5C; --ink:#FFFFFF; --muted:#A9BEE0; --line:#2B4C8A;
+    --primary:#4D88E8; --on-primary:#051938; --accent:#37C9EF;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#051938; --bg2:#0A2A63; --surface:#0C2A5C; --ink:#FFFFFF; --muted:#A9BEE0; --line:#2B4C8A;
+  --primary:#4D88E8; --on-primary:#051938; --accent:#37C9EF;
+  color-scheme:dark;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);background-image:linear-gradient(120deg,var(--bg),var(--bg2));color:var(--ink);
+  font:400 1.125rem/1.45 Barlow,"Segoe UI",Arial,sans-serif}
+button{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+.wrap{max-width:1840px;margin:0 auto;padding:clamp(14px,2vw,36px)}
+h1{margin:0;font:700 clamp(2.1rem,4vw,4.2rem)/1 "Barlow Condensed","Arial Narrow",Arial,sans-serif}
+.ask{margin:clamp(8px,1.2vw,16px) 0 clamp(10px,1.4vw,20px);font-size:clamp(1.3rem,2.2vw,2.2rem);line-height:1.25;min-height:1.3em}
+.stage{border-radius:28px;overflow:hidden;border:2px solid var(--line);background:#051938}
+.stage svg{display:block;width:100%;height:auto}
+.bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:clamp(12px,1.6vw,22px)}
+.btn{padding:.8em 1.3em;border-radius:12px;border:2px solid var(--line);background:var(--surface);font-weight:600;cursor:pointer;line-height:1;font-size:1.15rem}
+.btn:hover:not(:disabled){border-color:var(--primary)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.primary{background:var(--primary);color:var(--on-primary);border-color:var(--primary);font-size:1.3rem;padding:.9em 1.6em}
+.result{margin:clamp(10px,1.4vw,18px) 0 0;min-height:2.6em;font:600 clamp(1.3rem,2.2vw,2.2rem)/1.25 Barlow,Arial,sans-serif;max-width:56ch;opacity:0;transition:opacity .5s}
+.result.on{opacity:1}
+.sign{font:800 74px "Barlow Condensed","Arial Narrow",Arial,sans-serif;fill:#fff;text-anchor:middle}
+.plk{font:700 25px "Barlow Condensed","Arial Narrow",Arial,sans-serif;fill:#fff;text-anchor:middle}
+.slot{cursor:pointer}
+.slot .ghost{fill:rgba(255,255,255,.04);stroke:#fff;stroke-opacity:.45;stroke-width:3;stroke-dasharray:12 8}
+.slot:hover .ghost{stroke-opacity:.9}
+.board{fill:#4D88E8;stroke:#fff;stroke-width:4;stroke-linejoin:round}
+.cloud{fill:#fff;opacity:.1;animation:drift 40s ease-in-out infinite alternate}
+.cloud.b{animation-duration:55s;animation-direction:alternate-reverse}
+@keyframes drift{from{transform:translateX(-60px)}to{transform:translateX(60px)}}
+@media (prefers-reduced-motion: reduce){.cloud,.result{animation:none;transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <main>
+    <h1>The Strategy-Execution Gap</h1>
+    <p class="ask" id="ask" aria-live="polite"></p>
+    <div class="stage">
+      <svg id="svg" viewBox="0 0 1900 700" role="img" aria-label="A broken bridge between a cliff labeled Strategy and a cliff labeled Execution. A small character in a hard hat tries to cross."></svg>
+    </div>
+    <div class="bar">
+      <button type="button" class="btn" id="add">Add plank</button>
+      <button type="button" class="btn primary" id="cross">Cross</button>
+      <button type="button" class="btn" id="reset">Reset</button>
+    </div>
+    <p class="result" id="result" aria-live="polite"></p>
+  </main>
+</div>
+<script>
+(function () {
+  'use strict';
+  var NS = 'http://www.w3.org/2000/svg';
+  var LABELS = ['Goals', 'Actions', 'Owners', 'Timeline', 'Resources', 'Tracking'];
+  var N = LABELS.length, GX = 530, SW = 140, TOP = 430, X0 = 260, GOAL = 1640, SPEED = 320;
+  var state = { planks: [false, false, false, false, false, false], added: [0, 0, 0, 0, 0, 0], run: null, last: null };
+  var svg = document.getElementById('svg');
+  var $ = function (id) { return document.getElementById(id); };
+  function el(tag, attrs, parent) {
+    var e = document.createElementNS(NS, tag), k;
+    for (k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function eob(x) { x = Math.max(0, Math.min(1, x)); var c1 = 1.7, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); }
+  function eo(x) { x = Math.max(0, Math.min(1, x)); return 1 - Math.pow(1 - x, 3); }
+  function star(cx, cy, R, r) {
+    var pts = [], i, a;
+    for (i = 0; i < 10; i++) { a = -Math.PI / 2 + i * Math.PI / 5; pts.push((cx + Math.cos(a) * (i % 2 ? r : R)).toFixed(1) + ',' + (cy + Math.sin(a) * (i % 2 ? r : R)).toFixed(1)); }
+    return pts.join(' ');
+  }
+
+  /* ---------- scene ---------- */
+  var defs = el('defs', {}, svg);
+  var g1 = el('linearGradient', { id: 'sky', x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
+  el('stop', { offset: 0, 'stop-color': '#061A44' }, g1); el('stop', { offset: 1, 'stop-color': '#1B52B8' }, g1);
+  var g2 = el('linearGradient', { id: 'void', x1: 0, y1: 0, x2: 0, y2: 1 }, defs);
+  el('stop', { offset: 0, 'stop-color': '#0B2A66' }, g2); el('stop', { offset: 1, 'stop-color': '#030C22' }, g2);
+  el('rect', { width: 1900, height: 700, fill: 'url(#sky)' }, svg);
+  [[300, 120, 1.2, ''], [900, 80, 1.6, 'b'], [1500, 150, 1.1, '']].forEach(function (c) {
+    var g = el('g', { transform: 'translate(' + c[0] + ' ' + c[1] + ') scale(' + c[2] + ')' }, svg);
+    var gi = el('g', { class: 'cloud ' + c[3] }, g);
+    el('circle', { cx: -60, cy: 0, r: 38 }, gi); el('circle', { cx: -8, cy: -28, r: 52 }, gi);
+    el('circle', { cx: 52, cy: -4, r: 42 }, gi); el('rect', { x: -98, y: -2, width: 190, height: 40, rx: 20 }, gi);
+  });
+  el('rect', { x: 520, y: TOP, width: 860, height: 270, fill: 'url(#void)' }, svg);
+  el('path', { d: 'M520 660 q25 -14 50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0 t50 0', fill: 'none', stroke: '#37C9EF', 'stroke-opacity': .5, 'stroke-width': 4 }, svg);
+  el('polygon', { points: '0,430 520,430 540,470 515,540 545,620 525,700 0,700', fill: '#14306A', stroke: '#fff', 'stroke-width': 4, 'stroke-linejoin': 'round' }, svg);
+  el('polygon', { points: '1900,430 1380,430 1360,470 1385,540 1355,620 1375,700 1900,700', fill: '#14306A', stroke: '#fff', 'stroke-width': 4, 'stroke-linejoin': 'round' }, svg);
+  el('rect', { x: 0, y: 424, width: 524, height: 12, fill: '#4D88E8' }, svg);
+  el('rect', { x: 1376, y: 424, width: 524, height: 12, fill: '#4D88E8' }, svg);
+  var t1 = el('text', { class: 'sign', x: 260, y: 215 }, svg); t1.textContent = 'Strategy';
+  var t2 = el('text', { class: 'sign', x: 1640, y: 215 }, svg); t2.textContent = 'Execution';
+  el('line', { x1: 80, y1: 430, x2: 80, y2: 250, stroke: '#fff', 'stroke-width': 8, 'stroke-linecap': 'round' }, svg);
+  el('polygon', { points: '84,252 170,282 84,312', fill: '#37C9EF' }, svg);
+  var goalStar = el('polygon', { points: star(GOAL, 372, 44, 18), fill: '#FFD25A', stroke: '#fff', 'stroke-width': 4, 'stroke-linejoin': 'round' }, svg);
+
+  // plank slots
+  var slots = [], boards = [], texts = [];
+  for (var i = 0; i < N; i++) {
+    var s = el('g', { class: 'slot', tabindex: 0, role: 'button', 'aria-label': 'Plank: ' + LABELS[i] }, svg);
+    el('rect', { class: 'ghost', x: GX + i * SW + 5, y: TOP, width: SW - 10, height: 48, rx: 8 }, s);
+    var b = el('g', { opacity: 0 }, s);
+    el('rect', { class: 'board', x: GX + i * SW + 3, y: TOP, width: SW - 6, height: 48, rx: 8 }, b);
+    var tx = el('text', { class: 'plk', x: GX + i * SW + SW / 2, y: TOP + 33 }, b); tx.textContent = LABELS[i];
+    slots.push(s); boards.push(b); texts.push(tx);
+    (function (idx) {
+      s.addEventListener('click', function () { toggle(idx); });
+      s.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(idx); } });
+    })(i);
+  }
+
+  // splash, bubble, stars
+  var splash = el('ellipse', { cx: 0, cy: 672, rx: 1, ry: 1, fill: 'none', stroke: '#37C9EF', 'stroke-width': 5, opacity: 0 }, svg);
+  var bubble = el('g', { opacity: 0 }, svg);
+  el('rect', { x: -86, y: -52, width: 172, height: 72, rx: 24, fill: '#fff' }, bubble);
+  el('polygon', { points: '-14,20 14,20 0,42', fill: '#fff' }, bubble);
+  var bt = el('text', { x: 0, y: 4, 'text-anchor': 'middle', style: 'font:800 46px "Barlow Condensed","Arial Narrow",Arial,sans-serif;fill:#051938' }, bubble); bt.textContent = 'Oops!';
+  var stars = [];
+  for (i = 0; i < 8; i++) stars.push(el('polygon', { points: star(0, 0, 22, 9), fill: i % 2 ? '#37C9EF' : '#FFD25A', opacity: 0 }, svg));
+
+  // character (feet at 0,0)
+  var fig = el('g', { transform: 'translate(' + X0 + ' ' + TOP + ')' }, svg);
+  var armL = el('line', { x1: -26, y1: -100, x2: -40, y2: -62, stroke: '#fff', 'stroke-width': 9, 'stroke-linecap': 'round' }, fig);
+  var armR = el('line', { x1: 26, y1: -100, x2: 40, y2: -62, stroke: '#fff', 'stroke-width': 9, 'stroke-linecap': 'round' }, fig);
+  var legL = el('line', { x1: -12, y1: -40, x2: -14, y2: 0, stroke: '#fff', 'stroke-width': 10, 'stroke-linecap': 'round' }, fig);
+  var legR = el('line', { x1: 12, y1: -40, x2: 14, y2: 0, stroke: '#fff', 'stroke-width': 10, 'stroke-linecap': 'round' }, fig);
+  el('rect', { x: -28, y: -112, width: 56, height: 76, rx: 16, fill: '#4D88E8', stroke: '#fff', 'stroke-width': 5 }, fig);
+  el('circle', { cx: 0, cy: -146, r: 36, fill: '#F3F8FF', stroke: '#fff', 'stroke-width': 4 }, fig);
+  el('path', { d: 'M-38 -150 a38 38 0 0 1 76 0 z', fill: '#37C9EF', stroke: '#fff', 'stroke-width': 4, 'stroke-linejoin': 'round' }, fig);
+  el('rect', { x: -44, y: -154, width: 88, height: 10, rx: 5, fill: '#37C9EF', stroke: '#fff', 'stroke-width': 3 }, fig);
+  el('circle', { cx: -13, cy: -136, r: 5, fill: '#051938' }, fig);
+  el('circle', { cx: 13, cy: -136, r: 5, fill: '#051938' }, fig);
+  var smile = el('path', { d: 'M-12 -121 q12 12 24 0', fill: 'none', stroke: '#051938', 'stroke-width': 4, 'stroke-linecap': 'round' }, fig);
+  var omouth = el('circle', { cx: 0, cy: -118, r: 7, fill: '#051938', opacity: 0 }, fig);
+  var bang = el('text', { x: 62, y: -168, style: 'font:800 64px "Barlow Condensed",Arial,sans-serif;fill:#FFD25A', opacity: 0 }, fig); bang.textContent = '!';
+
+  /* ---------- timeline of one crossing ---------- */
+  function pose(u, miss) {
+    var P = { x: X0, y: 0, rot: 0, sc: 1, swing: 0, mood: 0, vis: 1, splash: -1, bubble: -1, burst: -1, done: false };
+    var edge, tw, hes = 0.6, fu, ju;
+    if (miss < 0) {
+      tw = (GOAL - 60 - X0) / SPEED;
+      if (u < tw) { P.x = X0 + SPEED * u; P.swing = Math.sin(P.x * 0.05) * 16; }
+      else { ju = u - tw; P.x = GOAL - 60; P.y = -Math.abs(Math.sin(ju * 6)) * 70 * Math.exp(-ju * 0.5); P.burst = ju; P.mood = 2; P.done = true; }
+    } else {
+      edge = GX + SW * miss - 36;
+      tw = Math.max(0, (edge - X0) / SPEED);
+      if (u < tw) { P.x = X0 + SPEED * u; P.swing = Math.sin(P.x * 0.05) * 16; }
+      else if (u < tw + hes) { P.x = edge; P.rot = Math.sin((u - tw) * 28) * 4; P.mood = 1; }
+      else {
+        fu = u - tw - hes;
+        P.x = edge + 90 * fu; P.y = 0.5 * 2400 * fu * fu; P.rot = 300 * fu; P.mood = 1;
+        if (P.y > 900) P.vis = 0;
+        if (fu > 0.62) P.splash = fu - 0.62;
+        if (fu > 0.1) P.bubble = fu - 0.1;
+        P.edge = edge;
+        if (fu > 2.2) { P.vis = 1; P.x = X0; P.y = 0; P.rot = 0; P.sc = eob((fu - 2.2) / 0.45); P.mood = 0; P.bubble = -1; }
+        if (fu > 2.8) P.done = 'again';
+      }
+    }
+    return P;
+  }
+
+  /* ---------- draw ---------- */
+  function setAsk() {
+    var c = state.planks.filter(Boolean).length, a = $('ask');
+    var t;
+    if (state.last === 'fail') t = 'What was missing?';
+    else if (state.last === 'ok') t = 'What made the crossing possible?';
+    else if (c === 0) t = 'What stops a good plan from becoming results?';
+    else if (c < N) t = 'What else belongs in the gap?';
+    else t = 'Would this bridge hold?';
+    if (a.textContent !== t) a.textContent = t;
+    $('add').disabled = c === N;
+  }
+  function draw(now) {
+    var P = { x: X0, y: 0, rot: 0, sc: 1, swing: 0, mood: 0, vis: 1, splash: -1, bubble: -1, burst: -1, done: false };
+    var run = state.run, i, miss;
+    if (run) {
+      miss = run.miss;
+      P = pose((now - run.t0) / 1000, miss);
+      if (P.done === 'again') { state.run = null; state.last = 'fail'; $('result').textContent = 'The plan falls through at \u201c' + LABELS[miss] + '\u201d.'; $('result').classList.add('on'); P = pose(0, miss); P.x = X0; }
+      else if (P.done === true && state.last !== 'ok') { state.last = 'ok'; $('result').textContent = 'Strategy becomes results with careful execution and strong leadership.'; $('result').classList.add('on'); }
+    }
+    for (i = 0; i < N; i++) {
+      var age = (now - state.added[i]) / 1000, on = state.planks[i];
+      boards[i].setAttribute('opacity', on ? Math.min(1, age * 6) : 0);
+      boards[i].setAttribute('transform', 'translate(0 ' + (on ? -(1 - eob(age / 0.4)) * 90 : 0).toFixed(1) + ')');
+      slots[i].querySelector('.ghost').setAttribute('opacity', on ? 0 : 1);
+    }
+    fig.setAttribute('transform', 'translate(' + P.x.toFixed(1) + ' ' + (TOP + P.y).toFixed(1) + ') rotate(' + P.rot.toFixed(1) + ' 0 -80) scale(' + P.sc.toFixed(3) + ')');
+    fig.setAttribute('opacity', P.vis);
+    var s = P.swing;
+    legL.setAttribute('x2', -14 + s); legR.setAttribute('x2', 14 - s);
+    armL.setAttribute('x2', -40 - s * 0.7); armR.setAttribute('x2', 40 + s * 0.7);
+    smile.setAttribute('opacity', P.mood === 1 ? 0 : 1); omouth.setAttribute('opacity', P.mood === 1 ? 1 : 0);
+    bang.setAttribute('opacity', P.mood === 1 && P.y === 0 ? 1 : 0);
+    if (P.splash >= 0) {
+      splash.setAttribute('cx', (P.x).toFixed(0)); splash.setAttribute('rx', (20 + 150 * P.splash).toFixed(1)); splash.setAttribute('ry', (6 + 40 * P.splash).toFixed(1));
+      splash.setAttribute('opacity', Math.max(0, 0.9 - P.splash * 1.3).toFixed(2));
+    } else splash.setAttribute('opacity', 0);
+    if (P.bubble >= 0) {
+      bubble.setAttribute('transform', 'translate(' + ((P.edge || X0) + 20) + ' ' + (300 - 12 * Math.min(1, P.bubble * 3)) + ')');
+      bubble.setAttribute('opacity', Math.min(1, P.bubble * 6) * (1 - Math.max(0, (P.bubble - 1.2) / 0.4)));
+    } else bubble.setAttribute('opacity', 0);
+    for (i = 0; i < stars.length; i++) {
+      if (P.burst >= 0 && P.burst < 1.6) {
+        var a = i * Math.PI / 4 + P.burst * 0.8, r = 40 + 190 * eo(P.burst / 1.1);
+        stars[i].setAttribute('transform', 'translate(' + (GOAL + Math.cos(a) * r).toFixed(1) + ' ' + (372 + Math.sin(a) * r * 0.8).toFixed(1) + ') rotate(' + (P.burst * 200) + ')');
+        stars[i].setAttribute('opacity', Math.max(0, 1 - P.burst / 1.6).toFixed(2));
+      } else stars[i].setAttribute('opacity', 0);
+    }
+    goalStar.setAttribute('transform', 'translate(0 ' + (Math.sin(now / 500) * 6).toFixed(1) + ')');
+    setAsk();
+    requestAnimationFrame(draw);
+  }
+
+  /* ---------- controls ---------- */
+  function clearResult() { state.last = null; $('result').classList.remove('on'); }
+  function toggle(i) {
+    if (state.run) return;
+    state.planks[i] = !state.planks[i];
+    if (state.planks[i]) state.added[i] = performance.now();
+    clearResult();
+  }
+  $('add').addEventListener('click', function () {
+    if (state.run) return;
+    var i = state.planks.indexOf(false);
+    if (i >= 0) toggle(i);
+  });
+  $('cross').addEventListener('click', function () {
+    clearResult();
+    state.run = { t0: performance.now(), miss: state.planks.indexOf(false) };
+  });
+  $('reset').addEventListener('click', function () {
+    state.planks = [false, false, false, false, false, false]; state.run = null; clearResult();
+  });
+
+  // deep links: #p3 (three planks), #p6-go (all planks, cross)
+  var m = /^#p([0-6])(-go)?$/.exec(location.hash);
+  if (m) {
+    for (i = 0; i < +m[1]; i++) { state.planks[i] = true; state.added[i] = -9999; }
+    if (m[2]) state.run = { t0: performance.now(), miss: state.planks.indexOf(false) };
+  }
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
